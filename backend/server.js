@@ -1,0 +1,11 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const otpRoutes = require('./routes/otp');
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use('/api/otp', otpRoutes);
+app.get('/health', (req, res) => res.json({ status: 'UP' }));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 API on ${PORT}`));

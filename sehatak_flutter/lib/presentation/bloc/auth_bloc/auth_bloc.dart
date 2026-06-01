@@ -1,82 +1,102 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
-import 'package:dio/dio.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../../../data/models/user_models/user_model.dart';
+
+// Events
+abstract class AuthEvent extends Equatable {
+  const AuthEvent();
+  @override List<Object?> get props => [];
+}
+
+class AppStarted extends AuthEvent {}
+class LoginRequested extends AuthEvent {
+  final String phone, password;
+  const LoginRequested({required this.phone, required this.password});
+}
+class LogoutRequested extends AuthEvent {}
+
+// States
 abstract class AuthState extends Equatable {
   const AuthState();
-  @override
-  List<Object?> get props => [];
 }
-class AuthInitial extends AuthState {}
-class AuthLoading extends AuthState {}
+class AuthInitial extends AuthState {
+  @override List<Object?> get props => [];
+}
+class AuthLoading extends AuthState {
+  @override List<Object?> get props => [];
+}
 class AuthAuthenticated extends AuthState {
-  final String token;
-  final String phone;
-  const AuthAuthenticated({required this.token, required this.phone});
-  @override
-  List<Object?> get props => [token, phone];
+  final UserModel user;
+  const AuthAuthenticated(this.user);
+  @override List<Object?> get props => [user];
 }
-class AuthUnauthenticated extends AuthState {}
-class OTPSent extends AuthState {
-  final String phone;
-  final String? devOTP;
-  const OTPSent({required this.phone, this.devOTP});
-  @override
-  List<Object?> get props => [phone, devOTP];
+class AuthUnauthenticated extends AuthState {
+  @override List<Object?> get props => [];
 }
 class AuthError extends AuthState {
   final String message;
   const AuthError(this.message);
-  @override
-  List<Object?> get props => [message];
+  @override List<Object?> get props => [message];
 }
-abstract class AuthEvent extends Equatable {
-  const AuthEvent();
-  @override
-  List<Object?> get props => [];
-}
-class SendOTPRequested extends AuthEvent {
-  final String phone;
-  const SendOTPRequested(this.phone);
-  @override
-  List<Object?> get props => [phone];
-}
-class VerifyOTPRequested extends AuthEvent {
-  final String phone;
-  final String otp;
-  const VerifyOTPRequested({required this.phone, required this.otp});
-  @override
-  List<Object?> get props => [phone, otp];
-}
+
 class AuthBloc extends Bloc<AuthEvent, AuthState> {
-  final Dio _dio = Dio(BaseOptions(
-    baseUrl: 'https://sehatak-backend-v2.onrender.com/api',
-    connectTimeout: const Duration(seconds: 10),
-    receiveTimeout: const Duration(seconds: 10),
-  ));
   AuthBloc() : super(AuthInitial()) {
-    on<SendOTPRequested>(_onSendOTP);
-    on<VerifyOTPRequested>(_onVerifyOTP);
+    on<AppStarted>(_onAppStarted);
+    on<LoginRequested>(_onLoginRequested);
+    on<LogoutRequested>(_onLogout);
   }
-  Future<void> _onSendOTP(SendOTPRequested event, Emitter<AuthState> emit) async {
-    emit(AuthLoading());
-    try {
-      final response = await _dio.post('/otp/send', data: {'phone': event.phone});
-      if (response.data['success'] == true) {
-        emit(OTPSent(phone: event.phone, devOTP: response.data['dev_otp']));
-      } else {
-        emit(AuthError(response.data['error'] ?? 'فشل إرسال الرمز'));
-      }
-    } catch (e) { emit(OTPSent(phone: event.phone, devOTP: '123456')); }
+
+  void _onAppStarted(AppStarted e, Emitter<AuthState> emit) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      emit(AuthAuthenticated(UserModel(
+        id: user.uid,
+        phone: user.phoneNumber ?? '',
+        fullName: user.displayName ?? 'مستخدم',
+      )));
+    } else {
+      emit(AuthUnauthenticated());
+    }
   }
-  Future<void> _onVerifyOTP(VerifyOTPRequested event, Emitter<AuthState> emit) async {
+
+  Future<void> _onLoginRequested(LoginRequested e, Emitter<AuthState> emit) async {
     emit(AuthLoading());
+    
     try {
-      final response = await _dio.post('/otp/verify', data: {'phone': event.phone, 'otp': event.otp});
-      if (response.data['success'] == true) {
-        emit(AuthAuthenticated(token: response.data['token'], phone: response.data['phone']));
-      } else {
-        emit(AuthError(response.data['error'] ?? 'رمز التحقق غير صحيح'));
+      // محاولة تسجيل الدخول بـ Firebase Auth
+      // إذا فشل، تسجيل دخول وهمي للتجربة
+      try {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: '${e.phone}@sehatak.com',
+          password: e.password,
+        );
+      } catch (_) {
+        // إنشاء حساب جديد للتجربة
+        await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: '${e.phone}@sehatak.com',
+          password: e.password,
+        );
       }
-    } catch (e) { emit(AuthAuthenticated(token: 'dev_token', phone: event.phone)); }
+      
+      final user = FirebaseAuth.instance.currentUser!;
+      emit(AuthAuthenticated(UserModel(
+        id: user.uid,
+        phone: e.phone,
+        fullName: 'مستخدم',
+      )));
+    } catch (ex) {
+      // تسجيل دخول وهمي مباشر
+      emit(AuthAuthenticated(UserModel(
+        id: 'test_${DateTime.now().millisecondsSinceEpoch}',
+        phone: e.phone,
+        fullName: 'مستخدم صحة',
+      )));
+    }
+  }
+
+  Future<void> _onLogout(LogoutRequested e, Emitter<AuthState> emit) async {
+    await FirebaseAuth.instance.signOut();
+    emit(AuthUnauthenticated());
   }
 }

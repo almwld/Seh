@@ -1,117 +1,113 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
-import '../../../core/services/api_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../core/services/firebase_service.dart';
+import '../../../data/models/user_models/user_model.dart';
 
-// States
+abstract class AuthEvent extends Equatable {
+  const AuthEvent();
+}
+class AppStarted extends AuthEvent {
+  @override List<Object?> get props => [];
+}
+class LoginWithEmail extends AuthEvent {
+  final String email, password;
+  const LoginWithEmail({required this.email, required this.password});
+  @override List<Object?> get props => [email, password];
+}
+class RegisterWithEmail extends AuthEvent {
+  final String name, email, phone, password;
+  const RegisterWithEmail({required this.name, required this.email, required this.phone, required this.password});
+  @override List<Object?> get props => [name, email, phone, password];
+}
+class Logout extends AuthEvent {
+  @override List<Object?> get props => [];
+}
+
 abstract class AuthState extends Equatable {
   const AuthState();
-  @override
-  List<Object?> get props => [];
 }
-
-class AuthInitial extends AuthState {}
-class AuthLoading extends AuthState {}
-class AuthAuthenticated extends AuthState {
-  final String phone;
-  final String? name;
-  const AuthAuthenticated({required this.phone, this.name});
+class AuthInitial extends AuthState {
+  @override List<Object?> get props => [];
 }
-class AuthUnauthenticated extends AuthState {}
-class OTPSent extends AuthState {
-  final String phone;
-  final String? devOtp;
-  const OTPSent({required this.phone, this.devOtp});
+class AuthLoading extends AuthState {
+  @override List<Object?> get props => [];
+}
+class Authenticated extends AuthState {
+  final UserModel user;
+  const Authenticated(this.user);
+  @override List<Object?> get props => [user];
+}
+class Unauthenticated extends AuthState {
+  @override List<Object?> get props => [];
 }
 class AuthError extends AuthState {
   final String message;
   const AuthError(this.message);
+  @override List<Object?> get props => [message];
 }
 
-// Events
-abstract class AuthEvent extends Equatable {
-  const AuthEvent();
-}
-
-class CheckAuth extends AuthEvent {
-  @override
-  List<Object?> get props => [];
-}
-class SendOTP extends AuthEvent {
-  final String phone;
-  const SendOTP(this.phone);
-  @override
-  List<Object?> get props => [phone];
-}
-class LoginWithOTP extends AuthEvent {
-  final String phone;
-  final String otp;
-  const LoginWithOTP({required this.phone, required this.otp});
-  @override
-  List<Object?> get props => [phone, otp];
-}
-class Logout extends AuthEvent {
-  @override
-  List<Object?> get props => [];
-}
-
-// BLoC
 class AuthBloc extends Bloc<AuthEvent, AuthState> {
+  final FirebaseService _fb = FirebaseService();
+
   AuthBloc() : super(AuthInitial()) {
-    on<CheckAuth>(_onCheckAuth);
-    on<SendOTP>(_onSendOTP);
-    on<LoginWithOTP>(_onLoginWithOTP);
+    on<AppStarted>(_onAppStarted);
+    on<LoginWithEmail>(_onLogin);
+    on<RegisterWithEmail>(_onRegister);
     on<Logout>(_onLogout);
   }
 
-  Future<void> _onCheckAuth(CheckAuth event, Emitter<AuthState> emit) async {
-    await ApiService.init();
-    if (ApiService.isLoggedIn) {
-      final profile = await ApiService.getProfile();
-      if (profile.success && profile.data != null) {
-        final user = profile.data as Map<String, dynamic>;
-        emit(AuthAuthenticated(
-          phone: user['phone'] ?? '',
-          name: user['name'],
-        ));
-      } else {
-        emit(AuthUnauthenticated());
-      }
+  void _onAppStarted(AppStarted e, Emitter<AuthState> emit) {
+    if (_fb.currentUser != null) {
+      emit(Authenticated(UserModel(id: _fb.currentUser!.uid, email: _fb.currentUser!.email)));
     } else {
-      emit(AuthUnauthenticated());
+      emit(Unauthenticated());
     }
   }
 
-  Future<void> _onSendOTP(SendOTP event, Emitter<AuthState> emit) async {
+  Future<void> _onLogin(LoginWithEmail e, Emitter<AuthState> emit) async {
     emit(AuthLoading());
-    final result = await ApiService.sendOTP(event.phone);
-    if (result.success && result.data != null) {
-      final data = result.data as Map<String, dynamic>;
-      emit(OTPSent(
-        phone: event.phone,
-        devOtp: data['dev_otp']?.toString(),
-      ));
-    } else {
-      emit(AuthError(result.error ?? 'فشل إرسال الرمز'));
+    try {
+      await _fb.auth.signInWithEmailAndPassword(email: e.email.trim(), password: e.password);
+      emit(Authenticated(UserModel(id: _fb.auth.currentUser!.uid, email: e.email)));
+    } on FirebaseAuthException catch (ex) {
+      emit(AuthError(_msg(ex.code)));
+    } catch (ex) {
+      emit(AuthError('تأكد من اتصال الإنترنت'));
     }
   }
 
-  Future<void> _onLoginWithOTP(LoginWithOTP event, Emitter<AuthState> emit) async {
+  Future<void> _onRegister(RegisterWithEmail e, Emitter<AuthState> emit) async {
     emit(AuthLoading());
-    final result = await ApiService.login(event.phone, event.otp);
-    if (result.success && result.data != null) {
-      final data = result.data as Map<String, dynamic>;
-      final user = data['user'] as Map<String, dynamic>?;
-      emit(AuthAuthenticated(
-        phone: event.phone,
-        name: user?['name']?.toString(),
-      ));
-    } else {
-      emit(AuthError(result.error ?? 'رمز غير صحيح'));
+    try {
+      final cred = await _fb.auth.createUserWithEmailAndPassword(email: e.email.trim(), password: e.password);
+      await _fb.userDoc(cred.user!.uid).set({
+        'id': cred.user!.uid, 'email': e.email, 'phone': e.phone,
+        'fullName': e.name, 'role': 'patient', 'createdAt': FieldValue.serverTimestamp(),
+      });
+      emit(Authenticated(UserModel(id: cred.user!.uid, email: e.email, fullName: e.name)));
+    } on FirebaseAuthException catch (ex) {
+      emit(AuthError(_msg(ex.code)));
+    } catch (ex) {
+      emit(AuthError('تأكد من اتصال الإنترنت'));
     }
   }
 
-  Future<void> _onLogout(Logout event, Emitter<AuthState> emit) async {
-    await ApiService.logout();
-    emit(AuthUnauthenticated());
+  Future<void> _onLogout(Logout e, Emitter<AuthState> emit) async {
+    await _fb.auth.signOut();
+    emit(Unauthenticated());
+  }
+
+  String _msg(String code) {
+    switch (code) {
+      case 'invalid-email': return 'إيميل غير صالح';
+      case 'user-not-found': return 'مستخدم غير موجود';
+      case 'wrong-password': return 'كلمة مرور خاطئة';
+      case 'email-already-in-use': return 'الإيميل مستخدم مسبقاً';
+      case 'weak-password': return 'كلمة مرور ضعيفة';
+      case 'network-request-failed': return 'لا يوجد اتصال';
+      default: return 'خطأ: $code';
+    }
   }
 }

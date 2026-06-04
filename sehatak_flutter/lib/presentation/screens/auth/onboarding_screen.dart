@@ -20,30 +20,34 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       fallbackIcon: Icons.health_and_safety,
       title: 'صحتك أولاً',
       description: 'منصة الرعاية الصحية الشاملة\nاستشر الأطباء واحجز مواعيدك بسهولة',
-      color: const Color(0xFF00796B),
+      gradient: AppColors.primaryGradient,
     ),
     OnboardingItem(
       animation: 'assets/animations/pharmacy.json',
       fallbackIcon: Icons.local_pharmacy,
       title: 'صيدلية متكاملة',
       description: 'اطلب أدويتك واستلمها لمنزلك\nمع توصيل سريع وآمن',
-      color: const Color(0xFF26A69A),
+      gradient: AppColors.secondaryGradient,
     ),
     OnboardingItem(
       animation: 'assets/animations/heartbeat.json',
       fallbackIcon: Icons.medical_services,
       title: 'رعاية متواصلة',
       description: 'متابعة صحية شاملة وتحاليل مخبرية\nوخدمات طوارئ على مدار الساعة',
-      color: const Color(0xFF004D40),
+      gradient: AppColors.medicalGradient,
     ),
   ];
 
   void _nextPage() {
     if (_currentPage < _pages.length - 1) {
-      _pageCtrl.nextPage(duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
+      _pageCtrl.nextPage(duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
     } else {
       SharedPreferences.getInstance().then((p) => p.setBool('onboarding_shown', false)).then((_) {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
+        Navigator.pushReplacement(context, PageRouteBuilder(
+          pageBuilder: (_, __, ___) => const LoginScreen(),
+          transitionsBuilder: (_, anim, __, child) => FadeTransition(opacity: anim, child: child),
+          transitionDuration: const Duration(milliseconds: 400),
+        ));
       });
     }
   }
@@ -60,11 +64,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = _pages[_currentPage].gradient;
+    
     return Scaffold(
-      body: Container(
+      body: AnimatedContainer(
+        duration: const Duration(milliseconds: 500),
         decoration: BoxDecoration(
-          gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter,
-            colors: isDark ? [const Color(0xFF0B1121), const Color(0xFF1A2540)] : [_pages[_currentPage].color, _pages[_currentPage].color.withOpacity(0.8)]),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: isDark ? AppColors.primaryGradient.map((c) => c.withOpacity(0.3)).toList() : colors,
+          ),
         ),
         child: SafeArea(
           child: Column(children: [
@@ -84,7 +94,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Text('${_currentPage + 1}/${_pages.length}', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 14)),
+                Text('${_currentPage + 1}/${_pages.length}', style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 14, fontFamily: 'Cairo')),
               ]),
             ),
             // زر تخطي
@@ -92,10 +102,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: TextButton(onPressed: _skip, child: Text('تخطي', style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 16, fontFamily: 'Cairo'))),
             )),
-            // المحتوى مع Lottie
+            // المحتوى
             Expanded(child: PageView.builder(
               controller: _pageCtrl, onPageChanged: (i) => setState(() => _currentPage = i),
-              itemCount: _pages.length, itemBuilder: (_, i) => _buildPage(_pages[i]),
+              itemCount: _pages.length, itemBuilder: (_, i) => _buildPage(_pages[i], isDark),
             )),
             // الأزرار
             Padding(padding: const EdgeInsets.all(32), child: Column(children: [
@@ -107,7 +117,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(height: 40),
               SizedBox(width: double.infinity, height: 56, child: ElevatedButton(
                 onPressed: _nextPage,
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: _pages[_currentPage].color, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: colors[0], shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
                 child: Text(_currentPage == _pages.length - 1 ? 'ابدأ الآن' : 'التالي', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
               )),
             ])),
@@ -117,21 +127,22 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  Widget _buildPage(OnboardingItem item) {
+  Widget _buildPage(OnboardingItem item, bool isDark) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 30),
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        // Lottie Animation
-        SizedBox(
-          width: 220,
-          height: 220,
-          child: Lottie.asset(
-            item.animation,
-            fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => Container(
-              width: 140, height: 140,
-              decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), shape: BoxShape.circle),
-              child: Icon(item.fallbackIcon, size: 70, color: Colors.white),
+        // أيقونة/Lottie
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.8, end: 1.0),
+          duration: const Duration(milliseconds: 600),
+          builder: (_, val, child) => Transform.scale(scale: val, child: child),
+          child: SizedBox(width: 220, height: 220,
+            child: Lottie.asset(item.animation, fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => Container(
+                width: 140, height: 140,
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20)]),
+                child: Icon(item.fallbackIcon, size: 70, color: Colors.white),
+              ),
             ),
           ),
         ),
@@ -149,7 +160,7 @@ class OnboardingItem {
   final IconData fallbackIcon;
   final String title;
   final String description;
-  final Color color;
+  final List<Color> gradient;
 
-  OnboardingItem({required this.animation, required this.fallbackIcon, required this.title, required this.description, required this.color});
+  OnboardingItem({required this.animation, required this.fallbackIcon, required this.title, required this.description, required this.gradient});
 }

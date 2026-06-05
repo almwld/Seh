@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -16,7 +17,6 @@ class LoginWithEmail extends AuthEvent {
   @override List<Object?> get props => [email, password];
 }
 class LoginWithGoogle extends AuthEvent { @override List<Object?> get props => []; }
-class LoginWithApple extends AuthEvent { @override List<Object?> get props => []; }
 class LoginWithPhone extends AuthEvent {
   final String phone;
   const LoginWithPhone(this.phone);
@@ -37,6 +37,12 @@ class ResetPassword extends AuthEvent {
   const ResetPassword(this.email);
   @override List<Object?> get props => [email];
 }
+class ResendOTP extends AuthEvent {
+  final String phone;
+  const ResendOTP(this.phone);
+  @override List<Object?> get props => [phone];
+}
+class TickTimer extends AuthEvent { @override List<Object?> get props => []; }
 class Logout extends AuthEvent { @override List<Object?> get props => []; }
 
 abstract class AuthState extends Equatable {
@@ -46,8 +52,9 @@ class AuthInitial extends AuthState { @override List<Object?> get props => []; }
 class AuthLoading extends AuthState { @override List<Object?> get props => []; }
 class AuthCodeSent extends AuthState {
   final String verificationId;
-  const AuthCodeSent(this.verificationId);
-  @override List<Object?> get props => [verificationId];
+  final int resendAfter; // ثواني
+  const AuthCodeSent({required this.verificationId, this.resendAfter = 30});
+  @override List<Object?> get props => [verificationId, resendAfter];
 }
 class Authenticated extends AuthState {
   final UserModel user;
@@ -65,23 +72,44 @@ class PasswordResetSent extends AuthState { @override List<Object?> get props =>
 class AuthBloc extends Bloc<AuthEvent, AuthState> {
   final FirebaseService _fb = FirebaseService();
   final GoogleSignIn _googleSignIn = GoogleSignIn();
+  Timer? _timer;
+  int _secondsLeft = 30;
 
   AuthBloc() : super(AuthInitial()) {
     on<AppStarted>(_onAppStarted);
     on<LoginWithEmail>(_onLogin);
     on<LoginWithGoogle>(_onGoogleLogin);
-    on<LoginWithApple>(_onAppleLogin);
     on<LoginWithPhone>(_onLoginPhone);
     on<VerifyPhoneOTP>(_onVerifyOTP);
     on<RegisterWithEmail>(_onRegister);
     on<ResetPassword>(_onResetPassword);
+    on<ResendOTP>(_onResendOTP);
+    on<TickTimer>(_onTick);
     on<Logout>(_onLogout);
+  }
+
+  void _startTimer() {
+    _secondsLeft = 30;
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => add(TickTimer()));
+  }
+
+  void _onTick(TickTimer e, Emitter<AuthState> emit) {
+    _secondsLeft--;
+    if (_secondsLeft <= 0) {
+      _timer?.cancel();
+      _secondsLeft = 0;
+    }
+    // تحديث الحالة مع عدد الثواني المتبقية
+    if (state is AuthCodeSent) {
+      final s = state as AuthCodeSent;
+      emit(AuthCodeSent(verificationId: s.verificationId, resendAfter: _secondsLeft));
+    }
   }
 
   void _onAppStarted(AppStarted e, Emitter<AuthState> emit) {
     if (_fb.auth.currentUser != null) {
-      final u = _fb.auth.currentUser!;
-      emit(Authenticated(UserModel(id: u.uid, email: u.email, fullName: u.displayName)));
+      emit(Authenticated(UserModel(id: _fb.auth.currentUser!.uid, email: _fb.auth.currentUser!.email)));
     } else {
       emit(Unauthenticated());
     }
@@ -105,29 +133,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       final googleUser = await _googleSignIn.signIn();
       if (googleUser == null) { emit(Unauthenticated()); return; }
       final googleAuth = await googleUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-      final userCred = await _fb.auth.signInWithCredential(credential);
-      await _saveUserIfNew(userCred);
-      final u = userCred.user!;
-      emit(Authenticated(UserModel(id: u.uid, email: u.email, fullName: u.displayName)));
+      final credential = GoogleAuthProvider.credential(accessToken: googleAuth.accessToken, idToken: googleAuth.idToken);
+      await _fb.auth.signInWithCredential(credential);
+      emit(Authenticated(UserModel(id: _fb.auth.currentUser!.uid, email: _fb.auth.currentUser!.email)));
     } catch (ex) {
-      emit(AuthError('فشل تسجيل الدخول بـ Google'));
-    }
-  }
-
-  Future<void> _onAppleLogin(LoginWithApple e, Emitter<AuthState> emit) async {
-    emit(AuthLoading());
-    try {
-      final appleProvider = AppleAuthProvider();
-      final userCred = await _fb.auth.signInWithProvider(appleProvider);
-      await _saveUserIfNew(userCred);
-      final u = userCred.user!;
-      emit(Authenticated(UserModel(id: u.uid, email: u.email, fullName: u.displayName)));
-    } catch (ex) {
-      emit(AuthError('فشل تسجيل الدخول بـ Apple'));
+      emit(AuthError('فشل Google'));
     }
   }
 
@@ -138,7 +148,10 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         phoneNumber: '+967${e.phone}',
         verificationCompleted: (cred) async { await _fb.auth.signInWithCredential(cred); },
         verificationFailed: (ex) => emit(AuthError(ex.message ?? 'خطأ')),
-        codeSent: (id, token) => emit(AuthCodeSent(id)),
+        codeSent: (id, token) {
+          _startTimer();
+          emit(AuthCodeSent(verificationId: id, resendAfter: 30));
+        },
         codeAutoRetrievalTimeout: (id) {},
       );
     } catch (ex) {
@@ -151,9 +164,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     try {
       final cred = PhoneAuthProvider.credential(verificationId: e.verificationId, smsCode: e.otp);
       final userCred = await _fb.auth.signInWithCredential(cred);
-      await _saveUserIfNew(userCred);
-      final u = userCred.user!;
-      emit(Authenticated(UserModel(id: u.uid, phone: u.phoneNumber)));
+      _timer?.cancel();
+      emit(Authenticated(UserModel(id: userCred.user!.uid, phone: userCred.user!.phoneNumber)));
     } catch (ex) {
       emit(AuthError('رمز التحقق غير صحيح'));
     }
@@ -170,13 +182,10 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       emit(Authenticated(UserModel(id: cred.user!.uid, email: e.email, fullName: e.name, phone: e.phone)));
     } on FirebaseAuthException catch (ex) {
       emit(AuthError(_msg(ex.code)));
-    } catch (ex) {
-      emit(AuthError('تأكد من اتصال الإنترنت'));
     }
   }
 
   Future<void> _onResetPassword(ResetPassword e, Emitter<AuthState> emit) async {
-    if (e.email.isEmpty) { emit(AuthError('أدخل بريدك الإلكتروني')); return; }
     emit(AuthLoading());
     try {
       await _fb.auth.sendPasswordResetEmail(email: e.email.trim());
@@ -186,20 +195,15 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     }
   }
 
+  Future<void> _onResendOTP(ResendOTP e, Emitter<AuthState> emit) async {
+    add(LoginWithPhone(e.phone));
+  }
+
   Future<void> _onLogout(Logout e, Emitter<AuthState> emit) async {
+    _timer?.cancel();
     await _googleSignIn.signOut();
     await _fb.auth.signOut();
     emit(Unauthenticated());
-  }
-
-  Future<void> _saveUserIfNew(UserCredential cred) async {
-    if (cred.additionalUserInfo?.isNewUser ?? false) {
-      await _fb.userDoc(cred.user!.uid).set({
-        'id': cred.user!.uid, 'email': cred.user!.email,
-        'fullName': cred.user!.displayName ?? '', 'role': 'patient',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    }
   }
 
   String _msg(String code) {
@@ -207,7 +211,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       case 'invalid-email': return 'بريد غير صالح';
       case 'user-not-found': return 'مستخدم غير موجود';
       case 'wrong-password': return 'كلمة مرور خاطئة';
-      case 'email-already-in-use': return 'البريد مستخدم مسبقاً';
+      case 'email-already-in-use': return 'البريد مستخدم';
       case 'weak-password': return 'كلمة مرور ضعيفة';
       case 'network-request-failed': return 'لا يوجد اتصال';
       case 'too-many-requests': return 'محاولات كثيرة';

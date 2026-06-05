@@ -16,6 +16,8 @@ class AppColors {
   static const Color grey = Color(0xFF9E9E9E);
   static const Color darkGrey = Color(0xFF616161);
   static const Color lightGrey = Color(0xFFE0E0E0);
+  static const Color white = Color(0xFFFFFFFF);
+  static const Color black = Color(0xFF000000);
   static const Color scaffoldLight = Color(0xFFF8FAFB);
   static const Color scaffoldDark = Color(0xFF0B1121);
   static const Color cardDark = Color(0xFF1A2540);
@@ -25,7 +27,10 @@ class AppColors {
   static const Color amber = Color(0xFFFFC107);
   static const Color orange = Color(0xFFFF9800);
   static const Color purple = Color(0xFF9C27B0);
+  static const Color pink = Color(0xFFE91E63);
+  static const Color indigo = Color(0xFF3F51B5);
   static const Color dark = Color(0xFF212121);
+  static const Color shadow = Color(0xFF000000);
   static const Color outlineVariant = Color(0xFFCAC4D0);
   static const Color surfaceContainerLow = Color(0xFFF7F2FA);
   static const List<Color> primaryGradient = [primary, primaryDark];

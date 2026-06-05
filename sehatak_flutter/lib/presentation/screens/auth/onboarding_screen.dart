@@ -120,7 +120,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             width: 200, height: 200,
             child: Icon(
               item.lottieUrl,
-              fit: BoxFit.contain,
+              
               errorBuilder: (_, __, ___) => Container(
                 width: 140, height: 140,
                 decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20)]),
